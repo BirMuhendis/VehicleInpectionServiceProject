@@ -1,0 +1,179 @@
+1) Aynı araç için aktif tek randevu olsun TRIGGER:
+
+CREATE OR REPLACE FUNCTION check_single_active_appointment()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.status = 'ACTIVE' THEN
+        IF EXISTS (
+            SELECT 1 FROM appointment
+            WHERE vehicle_id = NEW.vehicle_id
+              AND status = 'ACTIVE'
+              AND appointment_id <> COALESCE(NEW.appointment_id, -1)
+        ) THEN
+            RAISE EXCEPTION 'Bu araç için zaten aktif bir randevu var';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_single_active_appointment
+BEFORE INSERT OR UPDATE ON appointment
+FOR EACH ROW
+EXECUTE FUNCTION check_single_active_appointment();
+
+
+2) Inspection bitince sonucu otomatik hesapla TRIGGER
+
+CREATE OR REPLACE FUNCTION update_inspection_result()
+RETURNS TRIGGER AS $$
+DECLARE
+    failed_count INT;
+BEGIN
+    SELECT COUNT(*) INTO failed_count
+    FROM test_result
+    WHERE inspection_id = NEW.inspection_id
+      AND is_passed = FALSE;
+
+    UPDATE inspection
+    SET result_status = CASE
+        WHEN failed_count = 0 THEN 'PASSED'
+        ELSE 'FAILED'
+    END
+    WHERE inspection_id = NEW.inspection_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_update_inspection_result
+AFTER INSERT OR UPDATE ON test_result
+FOR EACH ROW
+EXECUTE FUNCTION update_inspection_result();
+
+
+3) Inspection bittiğinde randevu otomatik kapanır TRIGGER:
+
+CREATE OR REPLACE FUNCTION close_appointment_after_inspection()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.end_time IS NOT NULL THEN
+        UPDATE appointment
+        SET status = 'COMPLETED'
+        WHERE appointment_id = NEW.appointment_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_close_appointment
+AFTER UPDATE OF end_time ON inspection
+FOR EACH ROW
+EXECUTE FUNCTION close_appointment_after_inspection();
+
+
+4) Test sonucu limit dışındaysa otomatik FAIL TRIGGER:
+
+CREATE OR REPLACE FUNCTION auto_test_validation()
+RETURNS TRIGGER AS $$
+DECLARE
+    min_val NUMERIC;
+    max_val NUMERIC;
+BEGIN
+    SELECT min_limit, max_limit
+    INTO min_val, max_val
+    FROM test_parameter
+    WHERE test_parameter_id = NEW.test_parameter_id;
+
+    IF NEW.measured_value < min_val OR NEW.measured_value > max_val THEN
+        NEW.is_passed := FALSE;
+    ELSE
+        NEW.is_passed := TRUE;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_auto_test_validation
+BEFORE INSERT OR UPDATE ON test_result
+FOR EACH ROW
+EXECUTE FUNCTION auto_test_validation();
+
+
+5) FAILED inspection varsa payment yapılamasın:
+
+CREATE OR REPLACE FUNCTION prevent_payment_if_failed()
+RETURNS TRIGGER AS $$
+DECLARE
+    res TEXT;
+BEGIN
+    SELECT result_status INTO res
+    FROM inspection
+    WHERE inspection_id = NEW.inspection_id;
+
+    IF res <> 'PASSED' THEN
+        RAISE EXCEPTION 'Başarısız muayene için ödeme alınamaz';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_payment_validation
+BEFORE INSERT ON payment
+FOR EACH ROW
+EXECUTE FUNCTION prevent_payment_if_failed();
+
+
+6) Aktif ruhsat otomatik kapatma TRIGGER:
+
+CREATE OR REPLACE FUNCTION single_active_registration()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE license_registration
+    SET is_active = FALSE
+    WHERE vehicle_id = NEW.vehicle_id
+      AND registration_id <> NEW.registration_id;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_single_active_registration
+AFTER INSERT ON license_registration
+FOR EACH ROW
+EXECUTE FUNCTION single_active_registration();
+
+
+7) İstasyon günlük randevu limitleyici TRIGGER
+
+CREATE OR REPLACE FUNCTION enforce_station_daily_capacity()
+RETURNS TRIGGER AS $$
+DECLARE
+    today_count INT;
+    max_capacity INT;
+BEGIN
+    -- İstasyon kapasitesi
+    SELECT capacity_per_day
+    INTO max_capacity
+    FROM inspection_station
+    WHERE station_id = NEW.station_id;
+
+    -- O günkü randevu sayısı
+    SELECT COUNT(*)
+    INTO today_count
+    FROM appointment
+    WHERE station_id = NEW.station_id
+      AND appointment_date >= date_trunc('day', NEW.appointment_date)
+      AND appointment_date <  date_trunc('day', NEW.appointment_date) + INTERVAL '1 day';
+
+    IF today_count >= max_capacity THEN
+        RAISE EXCEPTION
+            'Bu istasyon için günlük kapasite dolu (% / %)',
+            today_count, max_capacity;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;

@@ -1,0 +1,224 @@
+BEGIN;
+
+-- =====================
+-- VEHICLE STRUCTURE
+-- =====================
+
+CREATE TABLE brand (
+    brand_id BIGSERIAL PRIMARY KEY,
+    brand_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE vehicle_type (
+    vehicle_type_id BIGSERIAL PRIMARY KEY,
+    type_name TEXT NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE model (
+    model_id BIGSERIAL PRIMARY KEY,
+    brand_id BIGINT NOT NULL REFERENCES brand(brand_id),
+    vehicle_type_id BIGINT NOT NULL REFERENCES vehicle_type(vehicle_type_id),
+    model_name TEXT NOT NULL,
+    fuel_type TEXT,
+    passenger_capacity INT,
+    max_weight INT
+);
+
+CREATE TABLE vehicle (
+    vehicle_id BIGSERIAL PRIMARY KEY,
+    model_id BIGINT NOT NULL REFERENCES model(model_id),
+    chassis_number TEXT UNIQUE NOT NULL,
+    engine_number TEXT UNIQUE NOT NULL,
+    color TEXT,
+    production_year INT
+);
+
+CREATE TABLE license_registration (
+    registration_id BIGSERIAL PRIMARY KEY,
+    vehicle_id BIGINT NOT NULL REFERENCES vehicle(vehicle_id),
+    plate_number TEXT UNIQUE NOT NULL,
+    license_serial_code TEXT UNIQUE NOT NULL,
+    registration_date DATE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- =====================
+-- OWNERS
+-- =====================
+
+CREATE TABLE owner (
+    owner_id BIGSERIAL PRIMARY KEY,
+    owner_type TEXT NOT NULL CHECK (owner_type IN ('INDIVIDUAL','COMPANY')),
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE individual_owner (
+    owner_id BIGINT PRIMARY KEY REFERENCES owner(owner_id),
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    national_id TEXT UNIQUE NOT NULL
+);
+
+CREATE TABLE company_owner (
+    owner_id BIGINT PRIMARY KEY REFERENCES owner(owner_id),
+    company_name TEXT NOT NULL,
+    tax_number TEXT UNIQUE NOT NULL,
+    tax_office TEXT,
+    contact_person TEXT
+);
+
+CREATE TABLE address (
+    address_id BIGSERIAL PRIMARY KEY,
+    street TEXT,
+    building_no TEXT,
+    door_no TEXT,
+    district TEXT,
+    city TEXT,
+    zip_code TEXT
+);
+
+CREATE TABLE owner_address (
+    owner_id BIGINT REFERENCES owner(owner_id),
+    address_id BIGINT REFERENCES address(address_id),
+    address_title TEXT,
+    PRIMARY KEY (owner_id, address_id)
+);
+
+CREATE TABLE owner_contact (
+    contact_id BIGSERIAL PRIMARY KEY,
+    owner_id BIGINT NOT NULL REFERENCES owner(owner_id),
+    contact_type TEXT,
+    contact_value TEXT,
+    is_primary BOOLEAN DEFAULT FALSE
+);
+
+CREATE TABLE vehicle_owner (
+    vehicle_id BIGINT REFERENCES vehicle(vehicle_id),
+    owner_id BIGINT REFERENCES owner(owner_id),
+    PRIMARY KEY (vehicle_id, owner_id)
+);
+
+-- =====================
+-- PERSONNEL
+-- =====================
+
+CREATE TABLE personnel (
+    personnel_id BIGSERIAL PRIMARY KEY,
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    hire_date DATE,
+    department TEXT,
+    work_shift TEXT,
+    salary NUMERIC(10,2),
+    personnel_type TEXT NOT NULL CHECK (personnel_type IN ('TECHNICIAN','INSPECTOR','OFFICE'))
+);
+
+CREATE TABLE technician (
+    personnel_id BIGINT PRIMARY KEY REFERENCES personnel(personnel_id),
+    expertise_area TEXT,
+    experience_years INT,
+    certification_level TEXT
+);
+
+CREATE TABLE inspector (
+    personnel_id BIGINT PRIMARY KEY REFERENCES personnel(personnel_id),
+    stamp_number TEXT UNIQUE NOT NULL
+);
+
+-- =====================
+-- INSPECTION STATION
+-- =====================
+
+CREATE TABLE inspection_station (
+    station_id BIGSERIAL PRIMARY KEY,
+    station_name TEXT NOT NULL,
+    address TEXT,
+    city TEXT,
+    phone_number TEXT,
+    capacity_per_day INT
+);
+
+CREATE TABLE station_personnel (
+    station_id BIGINT REFERENCES inspection_station(station_id),
+    personnel_id BIGINT REFERENCES personnel(personnel_id),
+    PRIMARY KEY (station_id, personnel_id)
+);
+
+-- =====================
+-- APPOINTMENT & INSPECTION
+-- =====================
+
+CREATE TABLE appointment (
+    appointment_id BIGSERIAL PRIMARY KEY,
+    vehicle_id BIGINT NOT NULL REFERENCES vehicle(vehicle_id),
+    station_id BIGINT NOT NULL REFERENCES inspection_station(station_id),
+    appointment_date TIMESTAMP NOT NULL,
+    status TEXT
+);
+
+CREATE TABLE inspection (
+    inspection_id BIGSERIAL PRIMARY KEY,
+    appointment_id BIGINT NOT NULL REFERENCES appointment(appointment_id),
+    inspector_id BIGINT REFERENCES inspector(personnel_id),
+    start_time TIMESTAMP,
+    end_time TIMESTAMP,
+    technician_notes TEXT,
+    result_status TEXT
+);
+
+-- =====================
+-- TESTS
+-- =====================
+
+CREATE TABLE test_parameter (
+    test_parameter_id BIGSERIAL PRIMARY KEY,
+    test_name TEXT NOT NULL,
+    unit TEXT,
+    min_limit NUMERIC,
+    max_limit NUMERIC
+);
+
+CREATE TABLE test_result (
+    test_result_id BIGSERIAL PRIMARY KEY,
+    inspection_id BIGINT REFERENCES inspection(inspection_id),
+    test_parameter_id BIGINT REFERENCES test_parameter(test_parameter_id),
+    measured_value NUMERIC,
+    standard_value_applied BOOLEAN,
+    is_passed BOOLEAN,
+    comments TEXT
+);
+
+-- =====================
+-- DEFECTS
+-- =====================
+
+CREATE TABLE defect_catalog (
+    defect_id BIGSERIAL PRIMARY KEY,
+    defect_code TEXT UNIQUE NOT NULL,
+    description TEXT,
+    severity TEXT
+);
+
+CREATE TABLE inspection_defect (
+    inspection_id BIGINT REFERENCES inspection(inspection_id),
+    defect_id BIGINT REFERENCES defect_catalog(defect_id),
+    location_note TEXT,
+    PRIMARY KEY (inspection_id, defect_id)
+);
+
+-- =====================
+-- PAYMENT
+-- =====================
+
+CREATE TABLE payment (
+    payment_id BIGSERIAL PRIMARY KEY,
+    inspection_id BIGINT NOT NULL REFERENCES inspection(inspection_id),
+    payment_no TEXT UNIQUE NOT NULL,
+    payment_date DATE NOT NULL,
+    amount NUMERIC(10,2) NOT NULL,
+    payment_method TEXT,
+    transaction_code TEXT
+);
+
+COMMIT;
